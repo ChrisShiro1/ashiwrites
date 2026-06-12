@@ -102,6 +102,7 @@ export default function WriteMode() {
   const [coverFile, setCoverFile] = useState(null)
   const [coverPreview, setCoverPreview] = useState(null)
   const [uploadingCover, setUploadingCover] = useState(false)
+  const [wordCount, setWordCount] = useState(0)
 
   // Chapters state
   const [chapters, setChapters] = useState([])
@@ -207,6 +208,12 @@ export default function WriteMode() {
     }
   }
 
+  const updateWordCount = () => {
+  const text = editorRef.current?.innerText?.trim() || ''
+  const count = text ? text.split(/\s+/).filter(Boolean).length : 0
+  setWordCount(count)
+  }
+
   const handleAddTag = (e) => {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault()
@@ -242,12 +249,14 @@ export default function WriteMode() {
     setActiveChapter(data)
     setChapterTitle(data.title)
     if (editorRef.current) editorRef.current.innerHTML = ''
+     setWordCount(0)
   }
 
   const handleSelectChapter = (chapter) => {
     setActiveChapter(chapter)
     setChapterTitle(chapter.title)
     if (editorRef.current) editorRef.current.innerHTML = chapter.content || ''
+    updateWordCount() // ← add this
   }
 
   const handleSaveChapter = async () => {
@@ -582,6 +591,7 @@ export default function WriteMode() {
               <button
                 onClick={handleNewChapter}
                 className="w-full flex items-center justify-center gap-2 bg-ink-500 text-parchment font-semibold py-2.5 rounded-xl hover:bg-ink-600 transition-colors text-sm"
+                
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -652,7 +662,7 @@ export default function WriteMode() {
                     Preview
                   </button>
                   <span className="text-xs text-ink-400">
-                    {editorRef.current?.innerText?.trim().split(/\s+/).filter(Boolean).length || 0} words
+                     {wordCount} words
                   </span>
                 </div>
 
@@ -670,7 +680,7 @@ export default function WriteMode() {
                     ref={editorRef}
                     contentEditable
                     suppressContentEditableWarning
-                    onInput={() => {}}
+                    onInput={updateWordCount}
                     className="min-h-full px-12 py-10 text-midnight leading-relaxed text-base outline-none font-body"
                     style={{
                       fontFamily: 'Georgia, serif',
