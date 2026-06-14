@@ -8,10 +8,8 @@ const GENRES = [
   'Romance', 'Fantasy', 'Mystery', 'Thriller', 'Horror',
   'Sci-Fi', 'Historical', 'Teen Fiction', 'Adventure', 'Poetry'
 ]
-
 const STATUS_OPTIONS = ['ongoing', 'complete', 'hiatus']
 
-// Simple Rich Text Toolbar
 function EditorToolbar({ onFormat, onInsertImage }) {
   const tools = [
     { label: 'B', cmd: 'bold', title: 'Bold' },
@@ -19,9 +17,8 @@ function EditorToolbar({ onFormat, onInsertImage }) {
     { label: 'U', cmd: 'underline', title: 'Underline' },
     { label: '"', cmd: 'blockquote', title: 'Quote' },
   ]
-
   return (
-    <div className="flex items-center gap-1 px-3 py-2 border-b border-ink-200 bg-ink-50/50">
+    <div className="flex items-center gap-1 px-3 py-2 border-b border-ink-200 bg-ink-50/50 flex-wrap">
       {tools.map(tool => (
         <button
           key={tool.cmd}
@@ -54,7 +51,6 @@ function EditorToolbar({ onFormat, onInsertImage }) {
         </button>
       ))}
       <div className="w-px h-5 bg-ink-200 mx-1" />
-      {/* Insert Image */}
       <button
         onMouseDown={e => e.preventDefault()}
         onClick={onInsertImage}
@@ -66,7 +62,6 @@ function EditorToolbar({ onFormat, onInsertImage }) {
         </svg>
       </button>
       <div className="w-px h-5 bg-ink-200 mx-1" />
-      {/* Font size */}
       <select
         onMouseDown={e => e.stopPropagation()}
         onChange={e => onFormat('fontSize', e.target.value)}
@@ -88,64 +83,54 @@ export default function WriteMode() {
   const navigate = useNavigate()
   const isNew = storyId === 'new'
 
-  // Story state
   const [story, setStory] = useState({
-    title: '',
-    description: '',
-    genre: '',
-    tags: [],
-    status: 'ongoing',
-    cover_url: null,
-    is_published: false,
+    title: '', description: '', genre: '', tags: [],
+    status: 'ongoing', cover_url: null, is_published: false,
   })
   const [tagInput, setTagInput] = useState('')
   const [coverFile, setCoverFile] = useState(null)
   const [coverPreview, setCoverPreview] = useState(null)
   const [uploadingCover, setUploadingCover] = useState(false)
-  const [wordCount, setWordCount] = useState(0)
 
-  // Chapters state
   const [chapters, setChapters] = useState([])
   const [activeChapter, setActiveChapter] = useState(null)
   const [chapterTitle, setChapterTitle] = useState('')
   const [saving, setSaving] = useState(false)
   const [savedStoryId, setSavedStoryId] = useState(isNew ? null : storyId)
 
-  // Active tab
   const [tab, setTab] = useState('details')
-  const [showPreview, setShowPreview] = useState(false)
-
-  // Image upload
+  const [showChapterDropdown, setShowChapterDropdown] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
-  const imageInputRef = useRef()
 
   const editorRef = useRef()
+  const imageInputRef = useRef()
+  const dropdownRef = useRef()
 
   useEffect(() => {
     if (!user) { navigate('/'); return }
     if (!isNew) fetchStory()
   }, [user, storyId])
 
-  const fetchStory = async () => {
-    const { data } = await supabase
-      .from('stories')
-      .select('*')
-      .eq('id', storyId)
-      .single()
-    if (data) {
-      setStory(data)
-      setCoverPreview(data.cover_url)
-      setSavedStoryId(data.id)
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowChapterDropdown(false)
+      }
     }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const fetchStory = async () => {
+    const { data } = await supabase.from('stories').select('*').eq('id', storyId).single()
+    if (data) { setStory(data); setCoverPreview(data.cover_url); setSavedStoryId(data.id) }
     fetchChapters()
   }
 
   const fetchChapters = async () => {
-    const { data } = await supabase
-      .from('chapters')
-      .select('*')
-      .eq('story_id', storyId)
-      .order('chapter_number', { ascending: true })
+    const { data } = await supabase.from('chapters').select('*')
+      .eq('story_id', storyId).order('chapter_number', { ascending: true })
     setChapters(data || [])
   }
 
@@ -153,15 +138,14 @@ export default function WriteMode() {
     const file = e.target.files[0]
     if (!file) return
     if (file.size > 5 * 1024 * 1024) { toast.error('Cover must be under 5MB'); return }
-    setCoverFile(file)
-    setCoverPreview(URL.createObjectURL(file))
+    setCoverFile(file); setCoverPreview(URL.createObjectURL(file))
   }
 
-  const uploadCover = async (storyId) => {
+  const uploadCover = async (id) => {
     if (!coverFile) return story.cover_url
     setUploadingCover(true)
     const ext = coverFile.name.split('.').pop()
-    const path = `covers/${storyId}.${ext}`
+    const path = `covers/${id}.${ext}`
     const { error } = await supabase.storage.from('covers').upload(path, coverFile, { upsert: true })
     if (error) { toast.error('Cover upload failed'); return null }
     const { data } = supabase.storage.from('covers').getPublicUrl(path)
@@ -173,19 +157,13 @@ export default function WriteMode() {
     if (!story.title.trim()) { toast.error('Title is required'); return }
     if (!story.genre) { toast.error('Please select a genre'); return }
     setSaving(true)
-
     try {
       let coverUrl = story.cover_url
-
       if (isNew || !savedStoryId) {
-        const { data: newStory, error } = await supabase
-          .from('stories')
-          .insert({ ...story, author_id: user.id, cover_url: null })
-          .select()
-          .single()
+        const { data: newStory, error } = await supabase.from('stories')
+          .insert({ ...story, author_id: user.id, cover_url: null }).select().single()
         if (error) throw error
         setSavedStoryId(newStory.id)
-
         if (coverFile) {
           coverUrl = await uploadCover(newStory.id)
           await supabase.from('stories').update({ cover_url: coverUrl }).eq('id', newStory.id)
@@ -194,69 +172,48 @@ export default function WriteMode() {
         navigate(`/write/${newStory.id}`, { replace: true })
       } else {
         if (coverFile) coverUrl = await uploadCover(savedStoryId)
-        const { error } = await supabase
-          .from('stories')
-          .update({ ...story, cover_url: coverUrl })
-          .eq('id', savedStoryId)
+        const { error } = await supabase.from('stories')
+          .update({ ...story, cover_url: coverUrl }).eq('id', savedStoryId)
         if (error) throw error
         toast.success('Story saved!')
       }
-    } catch (err) {
-      toast.error(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const updateWordCount = () => {
-  const text = editorRef.current?.innerText?.trim() || ''
-  const count = text ? text.split(/\s+/).filter(Boolean).length : 0
-  setWordCount(count)
+    } catch (err) { toast.error(err.message) }
+    finally { setSaving(false) }
   }
 
   const handleAddTag = (e) => {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault()
       const tag = tagInput.trim().toLowerCase().replace(/\s+/g, '-')
-      if (tag && !story.tags.includes(tag) && story.tags.length < 8) {
+      if (tag && !story.tags.includes(tag) && story.tags.length < 8)
         setStory(prev => ({ ...prev, tags: [...prev.tags, tag] }))
-      }
       setTagInput('')
     }
   }
 
-  const removeTag = (tag) => {
-    setStory(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }))
-  }
+  const removeTag = (tag) => setStory(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }))
 
-  // Chapter functions
   const handleNewChapter = async () => {
     if (!savedStoryId) { toast.error('Save story details first!'); return }
     const num = chapters.length + 1
-    const { data, error } = await supabase
-      .from('chapters')
-      .insert({
-        story_id: savedStoryId,
-        chapter_number: num,
-        title: `Chapter ${num}`,
-        content: '',
-        is_published: false,
-      })
-      .select()
-      .single()
+    const { data, error } = await supabase.from('chapters').insert({
+      story_id: savedStoryId, chapter_number: num,
+      title: `Chapter ${num}`, content: '', is_published: false,
+    }).select().single()
     if (error) { toast.error(error.message); return }
     setChapters(prev => [...prev, data])
     setActiveChapter(data)
     setChapterTitle(data.title)
     if (editorRef.current) editorRef.current.innerHTML = ''
-     setWordCount(0)
+    setShowChapterDropdown(false)
+    setTab('chapters')
   }
 
   const handleSelectChapter = (chapter) => {
     setActiveChapter(chapter)
     setChapterTitle(chapter.title)
     if (editorRef.current) editorRef.current.innerHTML = chapter.content || ''
-    updateWordCount() // ← add this
+    setShowChapterDropdown(false)
   }
 
   const handleSaveChapter = async () => {
@@ -264,17 +221,10 @@ export default function WriteMode() {
     setSaving(true)
     const content = editorRef.current?.innerHTML || ''
     const wordCount = editorRef.current?.innerText?.trim().split(/\s+/).filter(Boolean).length || 0
-
-    const { error } = await supabase
-      .from('chapters')
-      .update({
-        title: chapterTitle,
-        content,
-        word_count: wordCount,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', activeChapter.id)
-
+    const { error } = await supabase.from('chapters').update({
+      title: chapterTitle, content, word_count: wordCount,
+      updated_at: new Date().toISOString(),
+    }).eq('id', activeChapter.id)
     if (error) toast.error(error.message)
     else {
       toast.success('Chapter saved!')
@@ -285,32 +235,45 @@ export default function WriteMode() {
     setSaving(false)
   }
 
+  const handlePreview = async () => {
+    if (!activeChapter) return
+    await handleSaveChapter()
+    window.open(`/preview/${savedStoryId}/${activeChapter.id}`, '_blank')
+  }
+
   const handleToggleChapterPublish = async (chapter) => {
-    const { error } = await supabase
-      .from('chapters')
-      .update({ is_published: !chapter.is_published })
-      .eq('id', chapter.id)
+    const { error } = await supabase.from('chapters')
+      .update({ is_published: !chapter.is_published }).eq('id', chapter.id)
     if (error) toast.error(error.message)
     else {
       setChapters(prev => prev.map(c =>
         c.id === chapter.id ? { ...c, is_published: !c.is_published } : c
       ))
+      setActiveChapter(prev => prev?.id === chapter.id ? { ...prev, is_published: !prev.is_published } : prev)
       toast.success(chapter.is_published ? 'Chapter unpublished' : 'Chapter published!')
     }
   }
 
-  const handleFormat = (cmd, value) => {
-    if (cmd === 'blockquote') {
-      document.execCommand('formatBlock', false, 'blockquote')
-    } else if (cmd === 'fontSize') {
-      document.execCommand('fontSize', false, value)
-    } else {
-      document.execCommand(cmd, false, null)
+  const handleDeleteChapter = async (chapter) => {
+    if (!confirm(`Delete "${chapter.title}"?`)) return
+    const { error } = await supabase.from('chapters').delete().eq('id', chapter.id)
+    if (error) { toast.error(error.message); return }
+    setChapters(prev => prev.filter(c => c.id !== chapter.id))
+    if (activeChapter?.id === chapter.id) {
+      setActiveChapter(null)
+      setChapterTitle('')
+      if (editorRef.current) editorRef.current.innerHTML = ''
     }
+    toast.success('Chapter deleted')
+  }
+
+  const handleFormat = (cmd, value) => {
+    if (cmd === 'blockquote') document.execCommand('formatBlock', false, 'blockquote')
+    else if (cmd === 'fontSize') document.execCommand('fontSize', false, value)
+    else document.execCommand(cmd, false, null)
     editorRef.current?.focus()
   }
 
-  // Image insertion
   const handleInsertImage = () => {
     if (!savedStoryId) { toast.error('Save story details first!'); return }
     imageInputRef.current?.click()
@@ -320,64 +283,136 @@ export default function WriteMode() {
     const file = e.target.files[0]
     if (!file) return
     if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5MB'); return }
-
     setUploadingImage(true)
     try {
       const ext = file.name.split('.').pop()
       const path = `chapter-images/${savedStoryId}-${Date.now()}.${ext}`
       const { error } = await supabase.storage.from('covers').upload(path, file)
       if (error) throw error
-
       const { data } = supabase.storage.from('covers').getPublicUrl(path)
-
       editorRef.current?.focus()
-      const img = `<img src="${data.publicUrl}" alt="story image" style="max-width: 100%; border-radius: 12px; margin: 16px auto; display: block;" />`
-      document.execCommand('insertHTML', false, img)
-
+      document.execCommand('insertHTML', false,
+        `<img src="${data.publicUrl}" alt="story image" style="max-width:100%;border-radius:12px;margin:16px auto;display:block;" />`)
       toast.success('Image inserted!')
-    } catch (err) {
-      toast.error(err.message)
-    } finally {
-      setUploadingImage(false)
-      e.target.value = ''
-    }
+    } catch (err) { toast.error(err.message) }
+    finally { setUploadingImage(false); e.target.value = '' }
   }
 
-  // Auto-save chapter every 30 seconds
   useEffect(() => {
     if (!activeChapter) return
-    const interval = setInterval(() => {
-      handleSaveChapter()
-    }, 30000)
+    const interval = setInterval(() => handleSaveChapter(), 30000)
     return () => clearInterval(interval)
   }, [activeChapter, chapterTitle])
 
   return (
-    <div className="min-h-screen bg-parchment">
+    <div className="min-h-screen bg-parchment flex flex-col">
 
-      {/* Hidden file input for chapter images */}
-      <input
-        ref={imageInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleImageFileSelected}
-      />
+      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFileSelected} />
 
       {/* Top bar */}
-      <div className="sticky top-0 z-40 bg-parchment/95 backdrop-blur-sm border-b border-ink-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
-          <Link to="/my-stories" className="text-ink-400 hover:text-midnight transition-colors">
+      <div className="sticky top-0 z-40 bg-white border-b border-ink-200">
+        <div className="h-14 flex items-center gap-2 sm:gap-4 px-3 sm:px-6">
+
+          {/* Back button */}
+          <Link to="/my-stories" className="text-ink-400 hover:text-midnight transition-colors flex-shrink-0">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </Link>
 
-          <h1 className="font-display font-bold text-midnight text-lg flex-1 truncate">
-            {story.title || 'Untitled Story'}
-          </h1>
+          {/* Chapter dropdown (Wattpad-style) — only in chapters tab */}
+          {tab === 'chapters' && (
+            <div className="relative flex-shrink-0" ref={dropdownRef}>
+              <button
+                onClick={() => setShowChapterDropdown(prev => !prev)}
+                className="flex items-center gap-1.5 max-w-[160px] sm:max-w-xs"
+              >
+                <div className="text-left">
+                  <p className="text-xs text-ink-400 leading-none truncate">{story.title || 'Untitled Story'}</p>
+                  <p className="text-sm font-bold text-midnight leading-tight truncate">
+                    {activeChapter ? activeChapter.title : 'Select chapter'}
+                  </p>
+                </div>
+                <svg className={`w-4 h-4 text-ink-400 flex-shrink-0 transition-transform ${showChapterDropdown ? 'rotate-180' : ''}`}
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
 
-          <div className="flex items-center gap-1 bg-ink-100 rounded-full p-1">
+              {/* Dropdown */}
+              {showChapterDropdown && (
+                <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-ink-200 rounded-2xl shadow-xl z-50 overflow-hidden">
+                  <div className="p-2 border-b border-ink-100">
+                    <p className="text-xs font-bold text-ink-400 uppercase tracking-wide px-2 py-1">
+                      {story.title || 'Untitled Story'}
+                    </p>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {chapters.length === 0 ? (
+                      <p className="text-xs text-ink-400 text-center py-4">No chapters yet</p>
+                    ) : (
+                      chapters.map(chapter => (
+                        <div key={chapter.id} className="flex items-center group">
+                          <button
+                            onClick={() => handleSelectChapter(chapter)}
+                            className={`flex-1 text-left px-4 py-3 hover:bg-ink-50 transition-colors ${
+                              activeChapter?.id === chapter.id ? 'bg-ink-50' : ''
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-semibold text-midnight">{chapter.title}</p>
+                                <p className="text-xs text-ink-400">
+                                  {chapter.is_published ? '✓ Published' : 'Draft'} · {chapter.word_count || 0} words
+                                </p>
+                              </div>
+                              {activeChapter?.id === chapter.id && (
+                                <svg className="w-4 h-4 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteChapter(chapter)}
+                            className="px-3 py-3 text-ink-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                            title="Delete chapter"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="p-2 border-t border-ink-100">
+                    <button
+                      onClick={handleNewChapter}
+                      className="w-full flex items-center justify-center gap-2 bg-ink-500 text-parchment font-semibold py-2.5 rounded-xl hover:bg-ink-600 transition-colors text-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      New Chapter
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Story title (details tab) */}
+          {tab === 'details' && (
+            <h1 className="font-display font-bold text-midnight text-base sm:text-lg flex-1 truncate">
+              {story.title || 'Untitled Story'}
+            </h1>
+          )}
+
+          <div className="flex-1" />
+
+          {/* Tabs */}
+          <div className="flex items-center gap-1 bg-ink-100 rounded-full p-1 flex-shrink-0">
             {['details', 'chapters'].map(t => (
               <button
                 key={t}
@@ -391,51 +426,56 @@ export default function WriteMode() {
             ))}
           </div>
 
+          {/* Save / action buttons */}
           {tab === 'details' ? (
             <button
               onClick={handleSaveStory}
               disabled={saving || uploadingCover}
-              className="flex items-center gap-2 bg-ink-500 text-parchment font-semibold px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 bg-ink-500 text-parchment font-semibold px-3 sm:px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50 flex-shrink-0"
             >
-              {saving ? (
-                <div className="w-4 h-4 border-2 border-parchment border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-                </svg>
-              )}
-              {saving ? 'Saving...' : 'Save'}
+              {saving && <div className="w-4 h-4 border-2 border-parchment border-t-transparent rounded-full animate-spin" />}
+              Save
             </button>
-          ) : (
-            activeChapter && (
+          ) : activeChapter ? (
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={handlePreview}
+                className="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border border-ink-300 text-ink-600 hover:bg-ink-50 transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0zM2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                Preview
+              </button>
+              <button
+                onClick={handleToggleChapterPublish.bind(null, activeChapter)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors hidden sm:block ${
+                  activeChapter.is_published
+                    ? 'border-ink-300 text-ink-600 hover:bg-ink-50'
+                    : 'border-green-300 text-green-700 hover:bg-green-50'
+                }`}
+              >
+                {activeChapter.is_published ? 'Unpublish' : 'Publish'}
+              </button>
               <button
                 onClick={handleSaveChapter}
                 disabled={saving}
-                className="flex items-center gap-2 bg-ink-500 text-parchment font-semibold px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50"
+                className="flex items-center gap-1.5 bg-ink-500 text-parchment font-semibold px-3 sm:px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50"
               >
-                {saving ? (
-                  <div className="w-4 h-4 border-2 border-parchment border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-                  </svg>
-                )}
-                {saving ? 'Saving...' : 'Save Chapter'}
+                {saving && <div className="w-4 h-4 border-2 border-parchment border-t-transparent rounded-full animate-spin" />}
+                Save
               </button>
-            )
-          )}
+            </div>
+          ) : null}
         </div>
       </div>
 
       {/* DETAILS TAB */}
       {tab === 'details' && (
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+        <div className="max-w-4xl mx-auto w-full px-4 sm:px-6 py-8">
           <div className="grid md:grid-cols-3 gap-8">
-
             <div className="md:col-span-1">
-              <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-3">
-                Cover Image
-              </label>
+              <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-3">Cover Image</label>
               <label className="block cursor-pointer">
                 <div className={`aspect-[3/4.2] rounded-2xl overflow-hidden border-2 transition-all ${
                   coverPreview ? 'border-ink-300' : 'border-dashed border-ink-300 hover:border-ink-500'
@@ -454,30 +494,20 @@ export default function WriteMode() {
                       </svg>
                       <p className="text-xs text-ink-400 font-medium">Click to upload</p>
                       <p className="text-xs text-ink-300 mt-1">PNG, JPG up to 5MB</p>
-                      <p className="text-xs text-ink-300">Recommended: 300×420px</p>
                     </div>
                   )}
                 </div>
                 <input type="file" className="hidden" accept="image/*" onChange={handleCoverUpload} />
               </label>
-
               <div className="mt-4">
                 <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-2">Status</label>
                 <div className="flex flex-col gap-1.5">
                   {STATUS_OPTIONS.map(s => (
-                    <button
-                      key={s}
-                      onClick={() => setStory(prev => ({ ...prev, status: s }))}
+                    <button key={s} onClick={() => setStory(prev => ({ ...prev, status: s }))}
                       className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-medium capitalize transition-all ${
-                        story.status === s
-                          ? 'bg-ink-500 border-ink-500 text-parchment'
-                          : 'border-ink-200 text-ink-600 hover:bg-ink-50'
-                      }`}
-                    >
-                      <span className={`w-2 h-2 rounded-full ${
-                        s === 'complete' ? 'bg-green-400' :
-                        s === 'hiatus' ? 'bg-amber-400' : 'bg-blue-400'
-                      }`} />
+                        story.status === s ? 'bg-ink-500 border-ink-500 text-parchment' : 'border-ink-200 text-ink-600 hover:bg-ink-50'
+                      }`}>
+                      <span className={`w-2 h-2 rounded-full ${s === 'complete' ? 'bg-green-400' : s === 'hiatus' ? 'bg-amber-400' : 'bg-blue-400'}`} />
                       {s}
                     </button>
                   ))}
@@ -486,57 +516,32 @@ export default function WriteMode() {
             </div>
 
             <div className="md:col-span-2 space-y-5">
-
               <div>
-                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">
-                  Title <span className="text-red-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={story.title}
+                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">Title *</label>
+                <input type="text" value={story.title}
                   onChange={e => setStory(prev => ({ ...prev, title: e.target.value }))}
-                  placeholder="Give your story a title..."
-                  maxLength={100}
-                  className="w-full px-4 py-3 text-base border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white font-display font-semibold"
-                />
+                  placeholder="Give your story a title..." maxLength={100}
+                  className="w-full px-4 py-3 text-base border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white font-display font-semibold" />
               </div>
-
               <div>
-                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">
-                  Description <span className="text-red-400">*</span>
-                </label>
-                <textarea
-                  value={story.description}
+                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">Description *</label>
+                <textarea value={story.description}
                   onChange={e => setStory(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="What is your story about? Hook your readers..."
-                  maxLength={500}
-                  rows={4}
-                  className="w-full px-4 py-3 text-sm border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white resize-none leading-relaxed"
-                />
+                  placeholder="What is your story about?" maxLength={500} rows={4}
+                  className="w-full px-4 py-3 text-sm border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white resize-none leading-relaxed" />
                 <p className="text-xs text-ink-400 text-right mt-1">{story.description?.length || 0}/500</p>
               </div>
-
               <div>
-                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-2">
-                  Genre <span className="text-red-400">*</span>
-                </label>
+                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-2">Genre *</label>
                 <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                   {GENRES.map(g => (
-                    <button
-                      key={g}
-                      onClick={() => setStory(prev => ({ ...prev, genre: g }))}
+                    <button key={g} onClick={() => setStory(prev => ({ ...prev, genre: g }))}
                       className={`text-xs font-semibold px-3 py-2 rounded-xl border transition-all ${
-                        story.genre === g
-                          ? 'bg-ink-500 border-ink-500 text-parchment'
-                          : 'border-ink-200 text-ink-600 hover:bg-ink-50'
-                      }`}
-                    >
-                      {g}
-                    </button>
+                        story.genre === g ? 'bg-ink-500 border-ink-500 text-parchment' : 'border-ink-200 text-ink-600 hover:bg-ink-50'
+                      }`}>{g}</button>
                   ))}
                 </div>
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">
                   Tags <span className="text-ink-300 font-normal normal-case">(up to 8, press Enter)</span>
@@ -548,35 +553,23 @@ export default function WriteMode() {
                       <button onClick={() => removeTag(tag)} className="hover:text-red-500 transition-colors">×</button>
                     </span>
                   ))}
-                  <input
-                    type="text"
-                    value={tagInput}
-                    onChange={e => setTagInput(e.target.value)}
-                    onKeyDown={handleAddTag}
+                  <input type="text" value={tagInput}
+                    onChange={e => setTagInput(e.target.value)} onKeyDown={handleAddTag}
                     placeholder={story.tags?.length >= 8 ? 'Max tags reached' : 'Add tag...'}
                     disabled={story.tags?.length >= 8}
-                    className="text-xs outline-none bg-transparent flex-1 min-w-[100px] placeholder-ink-300"
-                  />
+                    className="text-xs outline-none bg-transparent flex-1 min-w-[100px] placeholder-ink-300" />
                 </div>
               </div>
-
               <div className="flex items-center justify-between p-4 bg-white border border-ink-200 rounded-xl">
                 <div>
                   <p className="text-sm font-semibold text-midnight">Mature Content</p>
                   <p className="text-xs text-ink-400">Mark if your story contains adult themes</p>
                 </div>
-                <button
-                  onClick={() => setStory(prev => ({ ...prev, is_mature: !prev.is_mature }))}
-                  className={`relative w-11 h-6 rounded-full transition-colors ${
-                    story.is_mature ? 'bg-ink-500' : 'bg-ink-200'
-                  }`}
-                >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                    story.is_mature ? 'translate-x-5' : ''
-                  }`} />
+                <button onClick={() => setStory(prev => ({ ...prev, is_mature: !prev.is_mature }))}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${story.is_mature ? 'bg-ink-500' : 'bg-ink-200'}`}>
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${story.is_mature ? 'translate-x-5' : ''}`} />
                 </button>
               </div>
-
             </div>
           </div>
         </div>
@@ -584,208 +577,99 @@ export default function WriteMode() {
 
       {/* CHAPTERS TAB */}
       {tab === 'chapters' && (
-        <div className="flex h-[calc(100vh-56px)]">
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {activeChapter ? (
+            <>
+              {/* Chapter title bar */}
+              <div className="px-4 sm:px-8 py-3 border-b border-ink-200 bg-white flex items-center gap-3">
+                <input
+                  type="text"
+                  value={chapterTitle}
+                  onChange={e => setChapterTitle(e.target.value)}
+                  className="flex-1 text-base sm:text-lg font-display font-bold text-midnight outline-none bg-transparent placeholder-ink-300"
+                  placeholder="Chapter title..."
+                />
+                {/* Mobile actions */}
+                <button
+                  onClick={handlePreview}
+                  className="sm:hidden text-xs font-semibold px-3 py-1.5 rounded-full border border-ink-300 text-ink-600"
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={handleToggleChapterPublish.bind(null, activeChapter)}
+                  className={`sm:hidden text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                    activeChapter.is_published ? 'border-ink-300 text-ink-600' : 'border-green-300 text-green-700'
+                  }`}
+                >
+                  {activeChapter.is_published ? 'Unpublish' : 'Publish'}
+                </button>
+              </div>
 
-          <div className="w-64 flex-shrink-0 border-r border-ink-200 bg-white flex flex-col">
-            <div className="p-4 border-b border-ink-200">
-              <button
-                onClick={handleNewChapter}
-                className="w-full flex items-center justify-center gap-2 bg-ink-500 text-parchment font-semibold py-2.5 rounded-xl hover:bg-ink-600 transition-colors text-sm"
-                
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                New Chapter
-              </button>
-            </div>
+              <EditorToolbar onFormat={handleFormat} onInsertImage={handleInsertImage} />
 
-            <div className="flex-1 overflow-y-auto">
-              {chapters.length === 0 ? (
-                <div className="text-center py-8 px-4">
-                  <p className="text-xs text-ink-400">No chapters yet. Create your first one!</p>
+              {uploadingImage && (
+                <div className="px-6 py-2 bg-ink-100 text-ink-600 text-xs font-medium flex items-center gap-2">
+                  <div className="w-3 h-3 border-2 border-ink-500 border-t-transparent rounded-full animate-spin" />
+                  Uploading image...
                 </div>
-              ) : (
-                chapters.map(chapter => (
-                  <button
-                    key={chapter.id}
-                    onClick={() => handleSelectChapter(chapter)}
-                    className={`w-full text-left px-4 py-3 border-b border-ink-100 hover:bg-ink-50 transition-colors ${
-                      activeChapter?.id === chapter.id ? 'bg-ink-50 border-l-2 border-l-ink-500' : ''
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-bold text-ink-400">Ch. {chapter.chapter_number}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                        chapter.is_published ? 'bg-green-100 text-green-600' : 'bg-ink-100 text-ink-400'
-                      }`}>
-                        {chapter.is_published ? '✓' : '·'}
-                      </span>
-                    </div>
-                    <p className="text-sm font-medium text-midnight truncate">{chapter.title}</p>
-                    <p className="text-xs text-ink-400 mt-0.5">{chapter.word_count || 0} words</p>
-                  </button>
-                ))
               )}
-            </div>
-          </div>
 
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {activeChapter ? (
-              <>
-                <div className="px-6 py-3 border-b border-ink-200 bg-white flex items-center gap-3">
-                  <input
-                    type="text"
-                    value={chapterTitle}
-                    onChange={e => setChapterTitle(e.target.value)}
-                    className="flex-1 text-base font-display font-bold text-midnight outline-none bg-transparent placeholder-ink-300"
-                    placeholder="Chapter title..."
-                  />
-                  <button
-                    onClick={() => handleToggleChapterPublish(activeChapter)}
-                    className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
-                      activeChapter.is_published
-                        ? 'border-ink-300 text-ink-600 hover:bg-ink-50'
-                        : 'border-green-300 text-green-700 hover:bg-green-50'
-                    }`}
-                  >
-                    {activeChapter.is_published ? 'Unpublish' : 'Publish Chapter'}
-                  </button>
-                  <button
-                    onClick={() => setShowPreview(true)}
-                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border border-ink-300 text-ink-600 hover:bg-ink-50 transition-colors"
-                  >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                    Preview
-                  </button>
-                  <span className="text-xs text-ink-400">
-                     {wordCount} words
-                  </span>
-                </div>
-
-                <EditorToolbar onFormat={handleFormat} onInsertImage={handleInsertImage} />
-
-                {uploadingImage && (
-                  <div className="px-6 py-2 bg-ink-100 text-ink-600 text-xs font-medium flex items-center gap-2">
-                    <div className="w-3 h-3 border-2 border-ink-500 border-t-transparent rounded-full animate-spin" />
-                    Uploading image...
-                  </div>
-                )}
-
-                <div className="flex-1 overflow-y-auto bg-white">
-                  <div
-                    ref={editorRef}
-                    contentEditable
-                    suppressContentEditableWarning
-                    onInput={updateWordCount}
-                    className="min-h-full px-12 py-10 text-midnight leading-relaxed text-base outline-none font-body"
-                    style={{
-                      fontFamily: 'Georgia, serif',
-                      fontSize: '16px',
-                      lineHeight: '1.8',
-                      maxWidth: '680px',
-                      margin: '0 auto',
-                    }}
-                    data-placeholder="Start writing your story here..."
-                  />
-                </div>
-
-                <div className="px-6 py-2 border-t border-ink-200 bg-white flex items-center justify-between">
-                  <p className="text-xs text-ink-400">Auto-saves every 30 seconds</p>
-                  <button
-                    onClick={handleSaveChapter}
-                    disabled={saving}
-                    className="text-xs font-semibold text-ink-500 hover:text-midnight transition-colors"
-                  >
-                    {saving ? 'Saving...' : 'Save now'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center">
-                  <svg className="w-16 h-16 text-ink-200 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                  <p className="font-display text-xl font-bold text-midnight mb-2">Ready to write?</p>
-                  <p className="text-sm text-ink-400 mb-4">
-                    {chapters.length === 0
-                      ? 'Create your first chapter to get started.'
-                      : 'Select a chapter from the sidebar.'}
-                  </p>
-                  {savedStoryId ? (
-                    <button
-                      onClick={handleNewChapter}
-                      className="inline-flex items-center gap-2 bg-ink-500 text-parchment font-semibold px-5 py-2.5 rounded-full hover:bg-ink-600 transition-colors text-sm"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      {chapters.length === 0 ? 'Create First Chapter' : 'New Chapter'}
-                    </button>
-                  ) : (
-                    <p className="text-xs text-ink-400">Save story details first!</p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Preview Modal */}
-      {showPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-midnight/60 backdrop-blur-sm">
-          <div className="bg-parchment rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
-
-            <div className="flex items-center justify-between px-6 py-4 border-b border-ink-200 bg-white">
-              <div className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-ink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-                <span className="text-sm font-semibold text-midnight">Reader Preview</span>
-              </div>
-              <button
-                onClick={() => setShowPreview(false)}
-                className="text-ink-400 hover:text-midnight transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto bg-midnight">
-              <div className="max-w-2xl mx-auto px-8 py-12">
-                <p className="text-center text-xs uppercase tracking-widest text-ink-300 mb-2">
-                  {story.title || 'Untitled Story'}
-                </p>
-                <h1 className="font-display text-3xl font-bold text-parchment text-center mb-8">
-                  {chapterTitle || 'Untitled Chapter'}
-                </h1>
-
+              {/* Editor — full width */}
+              <div className="flex-1 overflow-y-auto bg-white">
                 <div
-                  className="prose prose-invert max-w-none text-parchment/90 leading-loose"
-                  style={{ fontFamily: 'Georgia, serif', fontSize: '17px', lineHeight: '1.9' }}
-                  dangerouslySetInnerHTML={{ __html: editorRef.current?.innerHTML || '<p class="text-ink-300 italic">Nothing written yet...</p>' }}
+                  ref={editorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={() => {}}
+                  className="min-h-full outline-none text-midnight"
+                  style={{
+                    fontFamily: 'Georgia, serif',
+                    fontSize: '17px',
+                    lineHeight: '1.9',
+                    maxWidth: '720px',
+                    margin: '0 auto',
+                    padding: '40px 24px',
+                    wordWrap: 'break-word',
+                    overflowWrap: 'break-word',
+                  }}
+                  data-placeholder="Type your text..."
                 />
               </div>
-            </div>
 
-            <div className="px-6 py-3 border-t border-ink-200 bg-white flex items-center justify-between">
-              <p className="text-xs text-ink-400">This is how readers will see this chapter</p>
-              <button
-                onClick={() => setShowPreview(false)}
-                className="text-xs font-semibold bg-ink-500 text-parchment px-4 py-2 rounded-full hover:bg-ink-600 transition-colors"
-              >
-                Close Preview
-              </button>
+              <div className="px-4 sm:px-6 py-2 border-t border-ink-200 bg-white flex items-center justify-between">
+                <p className="text-xs text-ink-400">Auto-saves every 30 seconds</p>
+                <button onClick={handleSaveChapter} disabled={saving}
+                  className="text-xs font-semibold text-ink-500 hover:text-midnight transition-colors">
+                  {saving ? 'Saving...' : 'Save now'}
+                </button>
+              </div>
+            </>
+          ) : (
+            /* No chapter selected */
+            <div className="flex-1 flex items-center justify-center px-4">
+              <div className="text-center max-w-sm">
+                <svg className="w-16 h-16 text-ink-200 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+                <p className="font-display text-xl font-bold text-midnight mb-2">Ready to write?</p>
+                <p className="text-sm text-ink-400 mb-6">
+                  {chapters.length === 0 ? 'Create your first chapter to get started.' : 'Select a chapter from the dropdown above.'}
+                </p>
+                {savedStoryId ? (
+                  <button onClick={handleNewChapter}
+                    className="inline-flex items-center gap-2 bg-ink-500 text-parchment font-semibold px-6 py-3 rounded-full hover:bg-ink-600 transition-colors text-sm">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    {chapters.length === 0 ? 'Create First Chapter' : 'New Chapter'}
+                  </button>
+                ) : (
+                  <p className="text-xs text-ink-400">Save story details first!</p>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
