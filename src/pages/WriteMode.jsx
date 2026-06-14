@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -20,18 +20,12 @@ function EditorToolbar({ onFormat, onInsertImage }) {
   return (
     <div className="flex items-center gap-1 px-3 py-2 border-b border-ink-200 bg-ink-50/50 flex-wrap">
       {tools.map(tool => (
-        <button
-          key={tool.cmd}
+        <button key={tool.cmd}
           onMouseDown={e => { e.preventDefault(); onFormat(tool.cmd) }}
           title={tool.title}
           className={`w-8 h-8 rounded-lg text-sm font-bold text-ink-600 hover:bg-ink-200 transition-colors flex items-center justify-center ${
-            tool.label === 'B' ? 'font-extrabold' :
-            tool.label === 'I' ? 'italic' :
-            tool.label === 'U' ? 'underline' : ''
-          }`}
-        >
-          {tool.label}
-        </button>
+            tool.label === 'B' ? 'font-extrabold' : tool.label === 'I' ? 'italic' : tool.label === 'U' ? 'underline' : ''
+          }`}>{tool.label}</button>
       ))}
       <div className="w-px h-5 bg-ink-200 mx-1" />
       {[
@@ -39,35 +33,26 @@ function EditorToolbar({ onFormat, onInsertImage }) {
         { title: 'Align Center', cmd: 'justifyCenter', icon: 'M4 6h16M7 12h10M4 18h16' },
         { title: 'Align Right', cmd: 'justifyRight', icon: 'M4 6h16M10 12h10M4 18h16' },
       ].map(tool => (
-        <button
-          key={tool.cmd}
+        <button key={tool.cmd}
           onMouseDown={e => { e.preventDefault(); onFormat(tool.cmd) }}
           title={tool.title}
-          className="w-8 h-8 rounded-lg text-ink-600 hover:bg-ink-200 transition-colors flex items-center justify-center"
-        >
+          className="w-8 h-8 rounded-lg text-ink-600 hover:bg-ink-200 transition-colors flex items-center justify-center">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tool.icon} />
           </svg>
         </button>
       ))}
       <div className="w-px h-5 bg-ink-200 mx-1" />
-      <button
-        onMouseDown={e => e.preventDefault()}
-        onClick={onInsertImage}
-        title="Insert Image"
-        className="w-8 h-8 rounded-lg text-ink-600 hover:bg-ink-200 transition-colors flex items-center justify-center"
-      >
+      <button onMouseDown={e => e.preventDefault()} onClick={onInsertImage} title="Insert Image"
+        className="w-8 h-8 rounded-lg text-ink-600 hover:bg-ink-200 transition-colors flex items-center justify-center">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
       </button>
       <div className="w-px h-5 bg-ink-200 mx-1" />
-      <select
-        onMouseDown={e => e.stopPropagation()}
+      <select onMouseDown={e => e.stopPropagation()}
         onChange={e => onFormat('fontSize', e.target.value)}
-        className="text-xs text-ink-600 bg-transparent border-none outline-none cursor-pointer"
-        defaultValue="3"
-      >
+        className="text-xs text-ink-600 bg-transparent border-none outline-none cursor-pointer" defaultValue="3">
         <option value="2">Small</option>
         <option value="3">Normal</option>
         <option value="4">Large</option>
@@ -85,7 +70,7 @@ export default function WriteMode() {
 
   const [story, setStory] = useState({
     title: '', description: '', genre: '', tags: [],
-    status: 'ongoing', cover_url: null, is_published: false,
+    status: 'ongoing', cover_url: null, is_published: false, is_mature: false,
   })
   const [tagInput, setTagInput] = useState('')
   const [coverFile, setCoverFile] = useState(null)
@@ -98,25 +83,36 @@ export default function WriteMode() {
   const [saving, setSaving] = useState(false)
   const [savedStoryId, setSavedStoryId] = useState(isNew ? null : storyId)
 
-  const [tab, setTab] = useState('details')
+  // Notes state
+  const [notes, setNotes] = useState({
+    protagonist_name: '',
+    protagonist_other_names: '',
+    protagonist_pronoun: '',
+    protagonist_attributes: '',
+    story_goal: '',
+    story_outcome: '',
+  })
+
+  const [tab, setTab] = useState('details') // 'details' | 'toc' | 'notes' | 'chapters'
   const [showChapterDropdown, setShowChapterDropdown] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
+  const [autoSaveStatus, setAutoSaveStatus] = useState('') // '' | 'saving' | 'saved'
 
   const editorRef = useRef()
   const imageInputRef = useRef()
   const dropdownRef = useRef()
+  const autoSaveTimer = useRef()
+  const lastContentRef = useRef('')
 
   useEffect(() => {
     if (!user) { navigate('/'); return }
     if (!isNew) fetchStory()
   }, [user, storyId])
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleClick = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target))
         setShowChapterDropdown(false)
-      }
     }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
@@ -124,7 +120,12 @@ export default function WriteMode() {
 
   const fetchStory = async () => {
     const { data } = await supabase.from('stories').select('*').eq('id', storyId).single()
-    if (data) { setStory(data); setCoverPreview(data.cover_url); setSavedStoryId(data.id) }
+    if (data) {
+      setStory(data)
+      setCoverPreview(data.cover_url)
+      setSavedStoryId(data.id)
+      if (data.notes) setNotes(data.notes)
+    }
     fetchChapters()
   }
 
@@ -173,12 +174,19 @@ export default function WriteMode() {
       } else {
         if (coverFile) coverUrl = await uploadCover(savedStoryId)
         const { error } = await supabase.from('stories')
-          .update({ ...story, cover_url: coverUrl }).eq('id', savedStoryId)
+          .update({ ...story, cover_url: coverUrl, notes }).eq('id', savedStoryId)
         if (error) throw error
         toast.success('Story saved!')
       }
     } catch (err) { toast.error(err.message) }
     finally { setSaving(false) }
+  }
+
+  const handleSaveNotes = async () => {
+    if (!savedStoryId) { toast.error('Save story details first!'); return }
+    const { error } = await supabase.from('stories').update({ notes }).eq('id', savedStoryId)
+    if (error) toast.error(error.message)
+    else toast.success('Notes saved!')
   }
 
   const handleAddTag = (e) => {
@@ -205,6 +213,7 @@ export default function WriteMode() {
     setActiveChapter(data)
     setChapterTitle(data.title)
     if (editorRef.current) editorRef.current.innerHTML = ''
+    lastContentRef.current = ''
     setShowChapterDropdown(false)
     setTab('chapters')
   }
@@ -213,13 +222,42 @@ export default function WriteMode() {
     setActiveChapter(chapter)
     setChapterTitle(chapter.title)
     if (editorRef.current) editorRef.current.innerHTML = chapter.content || ''
+    lastContentRef.current = chapter.content || ''
     setShowChapterDropdown(false)
+    setTab('chapters')
   }
+
+  // Debounced auto-save — triggers on content change, not timer
+  const debouncedSave = useCallback(() => {
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
+    autoSaveTimer.current = setTimeout(async () => {
+      if (!activeChapter) return
+      const content = editorRef.current?.innerHTML || ''
+      if (content === lastContentRef.current) return // no change, skip
+      lastContentRef.current = content
+      setAutoSaveStatus('saving')
+      const wordCount = editorRef.current?.innerText?.trim().split(/\s+/).filter(Boolean).length || 0
+      const { error } = await supabase.from('chapters').update({
+        title: chapterTitle, content, word_count: wordCount,
+        updated_at: new Date().toISOString(),
+      }).eq('id', activeChapter.id)
+      if (!error) {
+        setChapters(prev => prev.map(c =>
+          c.id === activeChapter.id ? { ...c, title: chapterTitle, content, word_count: wordCount } : c
+        ))
+        setAutoSaveStatus('saved')
+        setTimeout(() => setAutoSaveStatus(''), 2000)
+      } else {
+        setAutoSaveStatus('')
+      }
+    }, 1500) // save 1.5 seconds after user stops typing
+  }, [activeChapter, chapterTitle])
 
   const handleSaveChapter = async () => {
     if (!activeChapter) return
     setSaving(true)
     const content = editorRef.current?.innerHTML || ''
+    lastContentRef.current = content
     const wordCount = editorRef.current?.innerText?.trim().split(/\s+/).filter(Boolean).length || 0
     const { error } = await supabase.from('chapters').update({
       title: chapterTitle, content, word_count: wordCount,
@@ -260,11 +298,31 @@ export default function WriteMode() {
     if (error) { toast.error(error.message); return }
     setChapters(prev => prev.filter(c => c.id !== chapter.id))
     if (activeChapter?.id === chapter.id) {
-      setActiveChapter(null)
-      setChapterTitle('')
+      setActiveChapter(null); setChapterTitle('')
       if (editorRef.current) editorRef.current.innerHTML = ''
     }
     toast.success('Chapter deleted')
+  }
+
+  // Drag-to-reorder chapters (TOC)
+  const dragItem = useRef(null)
+  const dragOverItem = useRef(null)
+
+  const handleDragStart = (index) => { dragItem.current = index }
+  const handleDragEnter = (index) => { dragOverItem.current = index }
+  const handleDragEnd = async () => {
+    const newChapters = [...chapters]
+    const draggedItem = newChapters.splice(dragItem.current, 1)[0]
+    newChapters.splice(dragOverItem.current, 0, draggedItem)
+    // Update chapter_number
+    const updated = newChapters.map((c, i) => ({ ...c, chapter_number: i + 1 }))
+    setChapters(updated)
+    dragItem.current = null; dragOverItem.current = null
+    // Persist to DB
+    await Promise.all(updated.map(c =>
+      supabase.from('chapters').update({ chapter_number: c.chapter_number }).eq('id', c.id)
+    ))
+    toast.success('Chapter order updated!')
   }
 
   const handleFormat = (cmd, value) => {
@@ -298,35 +356,24 @@ export default function WriteMode() {
     finally { setUploadingImage(false); e.target.value = '' }
   }
 
-  useEffect(() => {
-    if (!activeChapter) return
-    const interval = setInterval(() => handleSaveChapter(), 30000)
-    return () => clearInterval(interval)
-  }, [activeChapter, chapterTitle])
-
   return (
     <div className="min-h-screen bg-parchment flex flex-col">
-
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFileSelected} />
 
       {/* Top bar */}
       <div className="sticky top-0 z-40 bg-white border-b border-ink-200">
-        <div className="h-14 flex items-center gap-2 sm:gap-4 px-3 sm:px-6">
-
-          {/* Back button */}
+        <div className="h-14 flex items-center gap-2 sm:gap-3 px-3 sm:px-6">
           <Link to="/my-stories" className="text-ink-400 hover:text-midnight transition-colors flex-shrink-0">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </Link>
 
-          {/* Chapter dropdown (Wattpad-style) — only in chapters tab */}
+          {/* Chapter dropdown */}
           {tab === 'chapters' && (
             <div className="relative flex-shrink-0" ref={dropdownRef}>
-              <button
-                onClick={() => setShowChapterDropdown(prev => !prev)}
-                className="flex items-center gap-1.5 max-w-[160px] sm:max-w-xs"
-              >
+              <button onClick={() => setShowChapterDropdown(prev => !prev)}
+                className="flex items-center gap-1.5 max-w-[140px] sm:max-w-xs">
                 <div className="text-left">
                   <p className="text-xs text-ink-400 leading-none truncate">{story.title || 'Untitled Story'}</p>
                   <p className="text-sm font-bold text-midnight leading-tight truncate">
@@ -339,7 +386,6 @@ export default function WriteMode() {
                 </svg>
               </button>
 
-              {/* Dropdown */}
               {showChapterDropdown && (
                 <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-ink-200 rounded-2xl shadow-xl z-50 overflow-hidden">
                   <div className="p-2 border-b border-ink-100">
@@ -350,47 +396,36 @@ export default function WriteMode() {
                   <div className="max-h-64 overflow-y-auto">
                     {chapters.length === 0 ? (
                       <p className="text-xs text-ink-400 text-center py-4">No chapters yet</p>
-                    ) : (
-                      chapters.map(chapter => (
-                        <div key={chapter.id} className="flex items-center group">
-                          <button
-                            onClick={() => handleSelectChapter(chapter)}
-                            className={`flex-1 text-left px-4 py-3 hover:bg-ink-50 transition-colors ${
-                              activeChapter?.id === chapter.id ? 'bg-ink-50' : ''
-                            }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="text-sm font-semibold text-midnight">{chapter.title}</p>
-                                <p className="text-xs text-ink-400">
-                                  {chapter.is_published ? '✓ Published' : 'Draft'} · {chapter.word_count || 0} words
-                                </p>
-                              </div>
-                              {activeChapter?.id === chapter.id && (
-                                <svg className="w-4 h-4 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                                </svg>
-                              )}
+                    ) : chapters.map(chapter => (
+                      <div key={chapter.id} className="flex items-center group">
+                        <button onClick={() => handleSelectChapter(chapter)}
+                          className={`flex-1 text-left px-4 py-3 hover:bg-ink-50 transition-colors ${activeChapter?.id === chapter.id ? 'bg-ink-50' : ''}`}>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-semibold text-midnight">{chapter.title}</p>
+                              <p className="text-xs text-ink-400">
+                                {chapter.is_published ? '✓ Published' : 'Draft'} · {chapter.word_count || 0} words
+                              </p>
                             </div>
-                          </button>
-                          <button
-                            onClick={() => handleDeleteChapter(chapter)}
-                            className="px-3 py-3 text-ink-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                            title="Delete chapter"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-                      ))
-                    )}
+                            {activeChapter?.id === chapter.id && (
+                              <svg className="w-4 h-4 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                        </button>
+                        <button onClick={() => handleDeleteChapter(chapter)}
+                          className="px-3 py-3 text-ink-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
                   </div>
                   <div className="p-2 border-t border-ink-100">
-                    <button
-                      onClick={handleNewChapter}
-                      className="w-full flex items-center justify-center gap-2 bg-ink-500 text-parchment font-semibold py-2.5 rounded-xl hover:bg-ink-600 transition-colors text-sm"
-                    >
+                    <button onClick={handleNewChapter}
+                      className="w-full flex items-center justify-center gap-2 bg-ink-500 text-parchment font-semibold py-2.5 rounded-xl hover:bg-ink-600 transition-colors text-sm">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                       </svg>
@@ -402,71 +437,74 @@ export default function WriteMode() {
             </div>
           )}
 
-          {/* Story title (details tab) */}
-          {tab === 'details' && (
-            <h1 className="font-display font-bold text-midnight text-base sm:text-lg flex-1 truncate">
+          {tab !== 'chapters' && (
+            <h1 className="font-display font-bold text-midnight text-base sm:text-lg truncate flex-shrink-0 max-w-[120px] sm:max-w-xs">
               {story.title || 'Untitled Story'}
             </h1>
           )}
 
           <div className="flex-1" />
 
+          {/* Auto-save status */}
+          {autoSaveStatus && tab === 'chapters' && (
+            <span className={`text-xs flex-shrink-0 ${autoSaveStatus === 'saving' ? 'text-ink-400' : 'text-green-500'}`}>
+              {autoSaveStatus === 'saving' ? 'Saving...' : '✓ Saved'}
+            </span>
+          )}
+
           {/* Tabs */}
-          <div className="flex items-center gap-1 bg-ink-100 rounded-full p-1 flex-shrink-0">
-            {['details', 'chapters'].map(t => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`text-xs font-semibold px-3 py-1.5 rounded-full capitalize transition-all ${
-                  tab === t ? 'bg-parchment text-midnight shadow-sm' : 'text-ink-500'
-                }`}
-              >
-                {t}
+          <div className="flex items-center gap-0.5 bg-ink-100 rounded-full p-1 flex-shrink-0">
+            {[
+              { key: 'details', label: 'Details' },
+              { key: 'toc', label: 'Contents' },
+              { key: 'notes', label: 'Notes' },
+              { key: 'chapters', label: 'Write' },
+            ].map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                className={`text-xs font-semibold px-2.5 sm:px-3 py-1.5 rounded-full transition-all ${
+                  tab === t.key ? 'bg-parchment text-midnight shadow-sm' : 'text-ink-500'
+                }`}>
+                {t.label}
               </button>
             ))}
           </div>
 
-          {/* Save / action buttons */}
-          {tab === 'details' ? (
-            <button
-              onClick={handleSaveStory}
-              disabled={saving || uploadingCover}
-              className="flex items-center gap-1.5 bg-ink-500 text-parchment font-semibold px-3 sm:px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50 flex-shrink-0"
-            >
+          {/* Save buttons */}
+          {tab === 'details' && (
+            <button onClick={handleSaveStory} disabled={saving || uploadingCover}
+              className="flex items-center gap-1.5 bg-ink-500 text-parchment font-semibold px-3 sm:px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50 flex-shrink-0">
               {saving && <div className="w-4 h-4 border-2 border-parchment border-t-transparent rounded-full animate-spin" />}
               Save
             </button>
-          ) : activeChapter ? (
+          )}
+          {tab === 'notes' && (
+            <button onClick={handleSaveNotes}
+              className="flex items-center gap-1.5 bg-ink-500 text-parchment font-semibold px-3 sm:px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm flex-shrink-0">
+              Save Notes
+            </button>
+          )}
+          {tab === 'chapters' && activeChapter && (
             <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={handlePreview}
-                className="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border border-ink-300 text-ink-600 hover:bg-ink-50 transition-colors"
-              >
+              <button onClick={handlePreview}
+                className="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border border-ink-300 text-ink-600 hover:bg-ink-50 transition-colors">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0zM2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                 </svg>
                 Preview
               </button>
-              <button
-                onClick={handleToggleChapterPublish.bind(null, activeChapter)}
+              <button onClick={() => handleToggleChapterPublish(activeChapter)}
                 className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors hidden sm:block ${
-                  activeChapter.is_published
-                    ? 'border-ink-300 text-ink-600 hover:bg-ink-50'
-                    : 'border-green-300 text-green-700 hover:bg-green-50'
-                }`}
-              >
+                  activeChapter.is_published ? 'border-ink-300 text-ink-600 hover:bg-ink-50' : 'border-green-300 text-green-700 hover:bg-green-50'
+                }`}>
                 {activeChapter.is_published ? 'Unpublish' : 'Publish'}
               </button>
-              <button
-                onClick={handleSaveChapter}
-                disabled={saving}
-                className="flex items-center gap-1.5 bg-ink-500 text-parchment font-semibold px-3 sm:px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50"
-              >
+              <button onClick={handleSaveChapter} disabled={saving}
+                className="flex items-center gap-1.5 bg-ink-500 text-parchment font-semibold px-3 sm:px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50">
                 {saving && <div className="w-4 h-4 border-2 border-parchment border-t-transparent rounded-full animate-spin" />}
                 Save
               </button>
             </div>
-          ) : null}
+          )}
         </div>
       </div>
 
@@ -514,7 +552,6 @@ export default function WriteMode() {
                 </div>
               </div>
             </div>
-
             <div className="md:col-span-2 space-y-5">
               <div>
                 <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">Title *</label>
@@ -575,33 +612,187 @@ export default function WriteMode() {
         </div>
       )}
 
+      {/* TABLE OF CONTENTS TAB */}
+      {tab === 'toc' && (
+        <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="font-display text-xl font-bold text-midnight">Table of Contents</h2>
+            <button onClick={handleNewChapter}
+              className="flex items-center gap-2 bg-ink-500 text-parchment font-semibold px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New Chapter
+            </button>
+          </div>
+
+          {chapters.length === 0 ? (
+            <div className="text-center py-16 bg-white border border-ink-200 rounded-2xl">
+              <p className="text-ink-400 text-sm">No chapters yet. Create your first one!</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-ink-400 mb-3">Drag to reorder chapters</p>
+              {chapters.map((chapter, index) => (
+                <div
+                  key={chapter.id}
+                  draggable
+                  onDragStart={() => handleDragStart(index)}
+                  onDragEnter={() => handleDragEnter(index)}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={e => e.preventDefault()}
+                  className="flex items-center gap-3 bg-white border border-ink-200 rounded-xl p-4 cursor-grab active:cursor-grabbing hover:border-ink-300 hover:shadow-sm transition-all group"
+                >
+                  {/* Drag handle */}
+                  <div className="text-ink-300 group-hover:text-ink-400 flex-shrink-0">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+                    </svg>
+                  </div>
+
+                  <span className="text-xs font-bold text-ink-400 w-8 flex-shrink-0">Ch. {chapter.chapter_number}</span>
+
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-midnight truncate">{chapter.title}</p>
+                    <p className="text-xs text-ink-400">
+                      {chapter.is_published ? '✓ Published' : 'Draft'} · {chapter.word_count || 0} words
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button onClick={() => handleSelectChapter(chapter)}
+                      className="text-xs font-semibold text-ink-500 hover:text-midnight border border-ink-200 px-3 py-1.5 rounded-full hover:bg-ink-50 transition-colors">
+                      Edit
+                    </button>
+                    <button onClick={() => handleDeleteChapter(chapter)}
+                      className="text-xs text-red-400 hover:text-red-600 border border-red-200 px-3 py-1.5 rounded-full hover:bg-red-50 transition-colors">
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* STORY NOTES TAB */}
+      {tab === 'notes' && (
+        <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 space-y-6">
+
+          {/* Protagonist Section */}
+          <div className="bg-white border border-ink-200 rounded-2xl p-6">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="text-3xl">📖</div>
+              <div>
+                <h3 className="font-display font-bold text-midnight text-lg">Story Notes</h3>
+                <p className="text-sm text-ink-400">Store and track all of your story ideas in one place.</p>
+              </div>
+            </div>
+
+            <h4 className="font-bold text-midnight mb-1">The Protagonist</h4>
+            <p className="text-xs text-ink-400 leading-relaxed mb-4">
+              Stories have multiple characters, and many main characters. The Protagonist on the other hand is the leading character in your story.
+              They are the most prominent figure in your story, who drives the plot and makes up most of the narrative.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">
+                  Protagonist's Name <span className="text-ink-300 font-normal normal-case">(max 20)</span>
+                </label>
+                <input type="text" value={notes.protagonist_name} maxLength={20}
+                  onChange={e => setNotes(prev => ({ ...prev, protagonist_name: e.target.value }))}
+                  className="w-full px-4 py-2.5 text-sm border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white" />
+                <p className="text-xs text-ink-300 text-right mt-1">{notes.protagonist_name?.length || 0}/20</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">
+                  Other Names <span className="text-ink-300 font-normal normal-case">(max 50)</span>
+                </label>
+                <input type="text" value={notes.protagonist_other_names} maxLength={50}
+                  onChange={e => setNotes(prev => ({ ...prev, protagonist_other_names: e.target.value }))}
+                  placeholder="Separate names by commas"
+                  className="w-full px-4 py-2.5 text-sm border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">Pronoun</label>
+                <select value={notes.protagonist_pronoun}
+                  onChange={e => setNotes(prev => ({ ...prev, protagonist_pronoun: e.target.value }))}
+                  className="w-full px-4 py-2.5 text-sm border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 bg-white">
+                  <option value="">Select</option>
+                  <option value="he">He/Him</option>
+                  <option value="she">She/Her</option>
+                  <option value="they">They/Them</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">Attributes</label>
+                <input type="text" value={notes.protagonist_attributes}
+                  onChange={e => setNotes(prev => ({ ...prev, protagonist_attributes: e.target.value }))}
+                  placeholder="e.g. tall, brown hair, introverted..."
+                  className="w-full px-4 py-2.5 text-sm border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white" />
+              </div>
+            </div>
+          </div>
+
+          {/* Story Goal */}
+          <div className="bg-white border border-ink-200 rounded-2xl p-6">
+            <h4 className="font-bold text-midnight mb-1">The Story Goal</h4>
+            <p className="text-xs text-ink-400 leading-relaxed mb-4">
+              The Protagonist's goal in the story is what is known as the Story Goal. A Story Goal is the foundation of every plot.
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">
+                What is your Protagonist's ultimate goal? <span className="text-ink-300 font-normal">(max 75)</span>
+              </label>
+              <textarea value={notes.story_goal} maxLength={75} rows={3}
+                onChange={e => setNotes(prev => ({ ...prev, story_goal: e.target.value }))}
+                className="w-full px-4 py-2.5 text-sm border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white resize-none" />
+              <p className="text-xs text-ink-300 text-right mt-1">{notes.story_goal?.length || 0}/75</p>
+            </div>
+          </div>
+
+          {/* Story Outcome */}
+          <div className="bg-white border border-ink-200 rounded-2xl p-6">
+            <h4 className="font-bold text-midnight mb-1">The Story Outcome</h4>
+            <p className="text-xs text-ink-400 leading-relaxed mb-4">
+              Every story has a planned outcome. Knowing where you want to go will help you pace your story.
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-ink-500 uppercase tracking-wide mb-1.5">
+                What happens at the end? <span className="text-ink-300 font-normal">(max 150)</span>
+              </label>
+              <textarea value={notes.story_outcome} maxLength={150} rows={4}
+                onChange={e => setNotes(prev => ({ ...prev, story_outcome: e.target.value }))}
+                className="w-full px-4 py-2.5 text-sm border border-ink-200 rounded-xl focus:outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-200 bg-white resize-none" />
+              <p className="text-xs text-ink-300 text-right mt-1">{notes.story_outcome?.length || 0}/150</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CHAPTERS TAB */}
       {tab === 'chapters' && (
         <div className="flex-1 flex flex-col overflow-hidden">
           {activeChapter ? (
             <>
-              {/* Chapter title bar */}
               <div className="px-4 sm:px-8 py-3 border-b border-ink-200 bg-white flex items-center gap-3">
-                <input
-                  type="text"
-                  value={chapterTitle}
-                  onChange={e => setChapterTitle(e.target.value)}
+                <input type="text" value={chapterTitle}
+                  onChange={e => { setChapterTitle(e.target.value); debouncedSave() }}
                   className="flex-1 text-base sm:text-lg font-display font-bold text-midnight outline-none bg-transparent placeholder-ink-300"
-                  placeholder="Chapter title..."
-                />
-                {/* Mobile actions */}
-                <button
-                  onClick={handlePreview}
-                  className="sm:hidden text-xs font-semibold px-3 py-1.5 rounded-full border border-ink-300 text-ink-600"
-                >
+                  placeholder="Chapter title..." />
+                <button onClick={handlePreview}
+                  className="sm:hidden text-xs font-semibold px-3 py-1.5 rounded-full border border-ink-300 text-ink-600">
                   Preview
                 </button>
-                <button
-                  onClick={handleToggleChapterPublish.bind(null, activeChapter)}
+                <button onClick={() => handleToggleChapterPublish(activeChapter)}
                   className={`sm:hidden text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
                     activeChapter.is_published ? 'border-ink-300 text-ink-600' : 'border-green-300 text-green-700'
-                  }`}
-                >
+                  }`}>
                   {activeChapter.is_published ? 'Unpublish' : 'Publish'}
                 </button>
               </div>
@@ -615,13 +806,12 @@ export default function WriteMode() {
                 </div>
               )}
 
-              {/* Editor — full width */}
               <div className="flex-1 overflow-y-auto bg-white">
                 <div
                   ref={editorRef}
                   contentEditable
                   suppressContentEditableWarning
-                  onInput={() => {}}
+                  onInput={debouncedSave}
                   className="min-h-full outline-none text-midnight"
                   style={{
                     fontFamily: 'Georgia, serif',
@@ -637,8 +827,7 @@ export default function WriteMode() {
                 />
               </div>
 
-              <div className="px-4 sm:px-6 py-2 border-t border-ink-200 bg-white flex items-center justify-between">
-                <p className="text-xs text-ink-400">Auto-saves every 30 seconds</p>
+              <div className="px-4 sm:px-6 py-2 border-t border-ink-200 bg-white flex items-center justify-end">
                 <button onClick={handleSaveChapter} disabled={saving}
                   className="text-xs font-semibold text-ink-500 hover:text-midnight transition-colors">
                   {saving ? 'Saving...' : 'Save now'}
@@ -646,7 +835,6 @@ export default function WriteMode() {
               </div>
             </>
           ) : (
-            /* No chapter selected */
             <div className="flex-1 flex items-center justify-center px-4">
               <div className="text-center max-w-sm">
                 <svg className="w-16 h-16 text-ink-200 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
