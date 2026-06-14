@@ -97,6 +97,10 @@ export default function WriteMode() {
   const [showChapterDropdown, setShowChapterDropdown] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
   const [autoSaveStatus, setAutoSaveStatus] = useState('') // '' | 'saving' | 'saved'
+  const [chapterCoverFile, setChapterCoverFile] = useState(null)
+  const [chapterCoverPreview, setChapterCoverPreview] = useState(null)
+  const [uploadingChapterCover, setUploadingChapterCover] = useState(false)
+  const chapterCoverInputRef = useRef()
 
   const editorRef = useRef()
   const imageInputRef = useRef()
@@ -211,6 +215,8 @@ export default function WriteMode() {
     if (error) { toast.error(error.message); return }
     setChapters(prev => [...prev, data])
     setActiveChapter(data)
+    setChapterCoverPreview(null)
+    setChapterCoverFile(null)
     setChapterTitle(data.title)
     if (editorRef.current) editorRef.current.innerHTML = ''
     lastContentRef.current = ''
@@ -223,8 +229,23 @@ export default function WriteMode() {
     setChapterTitle(chapter.title)
     if (editorRef.current) editorRef.current.innerHTML = chapter.content || ''
     lastContentRef.current = chapter.content || ''
+    setChapterCoverPreview(chapter.cover_url || null)
+    setChapterCoverFile(null)
     setShowChapterDropdown(false)
     setTab('chapters')
+  }
+
+  const handleChapterCoverUpload = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5MB'); return }
+    setChapterCoverFile(file)
+    setChapterCoverPreview(URL.createObjectURL(file))
+  }
+
+  const handleRemoveChapterCover = () => {
+    setChapterCoverFile(null)
+    setChapterCoverPreview(null)
   }
 
   // Debounced auto-save — triggers on content change, not timer
@@ -254,24 +275,52 @@ export default function WriteMode() {
   }, [activeChapter, chapterTitle])
 
   const handleSaveChapter = async () => {
-    if (!activeChapter) return
-    setSaving(true)
-    const content = editorRef.current?.innerHTML || ''
-    lastContentRef.current = content
-    const wordCount = editorRef.current?.innerText?.trim().split(/\s+/).filter(Boolean).length || 0
-    const { error } = await supabase.from('chapters').update({
-      title: chapterTitle, content, word_count: wordCount,
-      updated_at: new Date().toISOString(),
-    }).eq('id', activeChapter.id)
-    if (error) toast.error(error.message)
-    else {
-      toast.success('Chapter saved!')
-      setChapters(prev => prev.map(c =>
-        c.id === activeChapter.id ? { ...c, title: chapterTitle, content, word_count: wordCount } : c
-      ))
+  if (!activeChapter) return
+  setSaving(true)
+  const content = editorRef.current?.innerHTML || ''
+  lastContentRef.current = content
+  const wordCount = editorRef.current?.innerText?.trim().split(/\s+/).filter(Boolean).length || 0
+
+  let coverUrl = activeChapter.cover_url || null
+
+  // Upload chapter cover if new file selected
+  if (chapterCoverFile) {
+    setUploadingChapterCover(true)
+    const ext = chapterCoverFile.name.split('.').pop()
+    const path = `chapter-covers/${activeChapter.id}.${ext}`
+    const { error: uploadError } = await supabase.storage
+      .from('covers').upload(path, chapterCoverFile, { upsert: true })
+    if (!uploadError) {
+      const { data: urlData } = supabase.storage.from('covers').getPublicUrl(path)
+      coverUrl = urlData.publicUrl
     }
-    setSaving(false)
+    setUploadingChapterCover(false)
+    setChapterCoverFile(null)
+  } else if (!chapterCoverPreview) {
+    // Cover was removed
+    coverUrl = null
   }
+
+  const { error } = await supabase.from('chapters').update({
+    title: chapterTitle,
+    content,
+    word_count: wordCount,
+    cover_url: coverUrl,
+    updated_at: new Date().toISOString(),
+  }).eq('id', activeChapter.id)
+
+  if (error) toast.error(error.message)
+  else {
+    toast.success('Chapter saved!')
+    setChapters(prev => prev.map(c =>
+      c.id === activeChapter.id
+        ? { ...c, title: chapterTitle, content, word_count: wordCount, cover_url: coverUrl }
+        : c
+    ))
+    setActiveChapter(prev => ({ ...prev, cover_url: coverUrl }))
+  }
+  setSaving(false)
+}
 
   const handlePreview = async () => {
     if (!activeChapter) return
@@ -483,28 +532,55 @@ export default function WriteMode() {
               Save Notes
             </button>
           )}
-          {tab === 'chapters' && activeChapter && (
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button onClick={handlePreview}
-                className="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border border-ink-300 text-ink-600 hover:bg-ink-50 transition-colors">
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0zM2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-                Preview
-              </button>
-              <button onClick={() => handleToggleChapterPublish(activeChapter)}
-                className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors hidden sm:block ${
-                  activeChapter.is_published ? 'border-ink-300 text-ink-600 hover:bg-ink-50' : 'border-green-300 text-green-700 hover:bg-green-50'
-                }`}>
-                {activeChapter.is_published ? 'Unpublish' : 'Publish'}
-              </button>
-              <button onClick={handleSaveChapter} disabled={saving}
-                className="flex items-center gap-1.5 bg-ink-500 text-parchment font-semibold px-3 sm:px-4 py-2 rounded-full hover:bg-ink-600 transition-colors text-sm disabled:opacity-50">
-                {saving && <div className="w-4 h-4 border-2 border-parchment border-t-transparent rounded-full animate-spin" />}
-                Save
-              </button>
-            </div>
-          )}
+
+          {/* Chapter cover/header image — Wattpad style */}
+          <div className="relative bg-ink-100 w-full" style={{ minHeight: chapterCoverPreview ? '280px' : '80px' }}>
+            {chapterCoverPreview ? (
+              <>
+                <img
+                  src={chapterCoverPreview}
+                  alt="Chapter cover"
+                  className="w-full object-cover"
+                  style={{ maxHeight: '320px', width: '100%' }}
+                />
+                {/* Controls overlay */}
+                <div className="absolute bottom-3 right-3 flex gap-2">
+                  <label className="flex items-center gap-1.5 bg-white/90 backdrop-blur-sm text-ink-700 font-semibold text-xs px-3 py-1.5 rounded-full cursor-pointer hover:bg-white transition-colors shadow">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Replace
+                    <input type="file" accept="image/*" className="hidden" ref={chapterCoverInputRef} onChange={handleChapterCoverUpload} />
+                  </label>
+                  <button
+                    onClick={handleRemoveChapterCover}
+                    className="flex items-center gap-1.5 bg-white/90 backdrop-blur-sm text-red-500 font-semibold text-xs px-3 py-1.5 rounded-full hover:bg-white transition-colors shadow"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Remove
+                  </button>
+                </div>
+              </>
+            ) : (
+              <label className="flex items-center justify-center w-full h-20 cursor-pointer group">
+                <div className="flex items-center gap-3 text-ink-400 group-hover:text-ink-600 transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <span className="text-sm font-medium">Add chapter cover image</span>
+                </div>
+                <input type="file" accept="image/*" className="hidden" onChange={handleChapterCoverUpload} />
+              </label>
+            )}
+            {uploadingChapterCover && (
+              <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-ink-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+          </div>
+                    
         </div>
       </div>
 

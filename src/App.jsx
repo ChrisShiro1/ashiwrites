@@ -13,6 +13,7 @@ import MyStories from './pages/MyStories'
 import WriteMode from './pages/WriteMode'
 import Profile from './pages/Profile'
 import Settings from './pages/Settings'
+import PreviewMode from './pages/Previewmode'
 
 
 function MainLayout({ children }) {
@@ -99,6 +100,7 @@ function AppContent() {
         <Route path="/browse" element={<MainLayout><Browse /></MainLayout>} />
         <Route path="/my-stories" element={<MainLayout><MyStories /></MainLayout>} />
         <Route path="/write/:storyId" element={<WriteMode />} />
+        <Route path="/preview" element={<PreviewMode />} />
         <Route path="/write/new" element={<WriteMode />} />
         <Route path="/profile/:username" element={<MainLayout><Profile /></MainLayout>} />
         <Route path="/settings" element={<MainLayout><Settings /></MainLayout>} />
