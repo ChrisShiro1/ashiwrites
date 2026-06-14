@@ -13,7 +13,7 @@ import MyStories from './pages/MyStories'
 import WriteMode from './pages/WriteMode'
 import Profile from './pages/Profile'
 import Settings from './pages/Settings'
-import PreviewMode from './pages/Previewmode'
+import PreviewMode from './pages/PreviewMode'
 
 
 function MainLayout({ children }) {
